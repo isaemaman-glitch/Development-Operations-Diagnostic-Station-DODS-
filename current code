@@ -1,0 +1,131 @@
+#include <Servo.h>
+
+const int POT_PIN = A0;
+const int SIGNAL_PIN = 15;
+const int MODE_BUTTON_PIN = 14;
+const int LED_RED_PIN = 10;
+const int LED_GREEN_PIN = 11;
+const int LED_BLUE_PIN = 12;
+const int LED_PIN = LED_BUILTIN;
+
+const int SERVO_MIN_US = 500;
+const int SERVO_MAX_US = 2500;
+const int SERVO_CENTER_US = 1500;
+
+Servo testerOutput;
+
+unsigned long lastPrintMs = 0;
+unsigned long lastBlinkMs = 0;
+unsigned long lastButtonChangeMs = 0;
+unsigned long bootMs = 0;
+bool ledState = false;
+bool lastModeButtonReading = HIGH;
+bool modeButtonState = HIGH;
+
+enum OutputMode {
+  MODE_POT_PWM,
+  MODE_CENTER_PWM
+};
+
+OutputMode outputMode = MODE_POT_PWM;
+
+void updateModeButton() {
+  const bool reading = digitalRead(MODE_BUTTON_PIN);
+
+  if (reading != lastModeButtonReading) {
+    lastButtonChangeMs = millis();
+    lastModeButtonReading = reading;
+  }
+
+  if ((millis() - lastButtonChangeMs) > 40 && reading != modeButtonState) {
+    modeButtonState = reading;
+
+    if (modeButtonState == LOW) {
+      outputMode = (outputMode == MODE_POT_PWM) ? MODE_CENTER_PWM : MODE_POT_PWM;
+    }
+  }
+}
+
+bool centerModeEnabled() {
+  return outputMode == MODE_CENTER_PWM;
+}
+
+int mapPotToPulse(int potValue) {
+  return map(potValue, 6, 1023, SERVO_MIN_US, SERVO_MAX_US);
+}
+
+void setRgbLed(int red, int green, int blue) {
+  analogWrite(LED_RED_PIN, red);
+  analogWrite(LED_GREEN_PIN, green);
+  analogWrite(LED_BLUE_PIN, blue);
+}
+
+void writeModeLed() {
+  if (outputMode == MODE_CENTER_PWM) {
+    setRgbLed(0, 0, 255);
+  } else {
+    setRgbLed(0, 255, 0);
+  }
+}
+
+void setup() {
+  pinMode(MODE_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(SIGNAL_PIN, OUTPUT);
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(LED_RED_PIN, OUTPUT);
+  pinMode(LED_GREEN_PIN, OUTPUT);
+  pinMode(LED_BLUE_PIN, OUTPUT);
+
+  for (int i = 0; i < 6; i++) {
+    digitalWrite(LED_PIN, HIGH);
+    delay(80);
+    digitalWrite(LED_PIN, LOW);
+    delay(80);
+  }
+
+  Serial.begin(115200);
+  bootMs = millis();
+
+testerOutput.attach(SIGNAL_PIN, SERVO_MIN_US, SERVO_MAX_US);
+
+  Serial.println("Pico Mini Operations Station V1");
+  Serial.println("GP14 button to GND cycles POT PWM / CENTER PWM modes");
+  Serial.println("RGB mode LED: green=pot mode, blue=center mode");
+  Serial.println("GP15 = servo/ESC-style PWM output, 500us to 2500us");
+}
+
+void loop() {
+  const int potValue = analogRead(POT_PIN);
+  updateModeButton();
+  const bool centerMode = centerModeEnabled();
+
+if (centerMode) {
+  testerOutput.writeMicroseconds(SERVO_CENTER_US);
+} else {
+  testerOutput.writeMicroseconds(mapPotToPulse(potValue));
+}
+
+  writeModeLed();
+
+  const unsigned long now = millis();
+  const unsigned long blinkRateMs = 500;
+
+  if (now - lastBlinkMs >= blinkRateMs) {
+    ledState = !ledState;
+    digitalWrite(LED_PIN, ledState ? HIGH : LOW);
+    lastBlinkMs = now;
+  }
+
+  if (now - lastPrintMs >= 250) {
+    const int percent = map(potValue, 6, 1023, 0, 100);
+
+    Serial.print("alive_ms=");
+    Serial.print(now - bootMs);
+    Serial.print(" ");
+    Serial.print("mode=");
+    Serial.print(centerMode ? "CENTER" : "POT");
+    lastPrintMs = now;
+  }
+
+  delay(30);
+}
